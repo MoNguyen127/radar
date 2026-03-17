@@ -42,6 +42,7 @@ def quick_train(
     subset_size: int = 100,
     num_epochs: int = 3,
     batch_size: int = 4,
+    window_length: int = 1000,
     d_model: int = 256,
     nhead: int = 8,
     num_layers: int = 8,
@@ -62,7 +63,7 @@ def quick_train(
     print("\nLoading data...")
     train_dataset = DeinterleavingChallengeDataset(
         subset='train',
-        window_length=1000,
+        window_length=window_length,
         local_path=data_dir,
         min_emitters=2,
     )
@@ -172,6 +173,7 @@ def parse_args():
     parser.add_argument('--subset_size', type=int, default=100, help='Number of train windows to use')
     parser.add_argument('--epochs', type=int, default=3, help='Number of quick-test epochs')
     parser.add_argument('--batch_size', type=int, default=4, help='Batch size for quick-test')
+    parser.add_argument('--window_length', type=int, default=1000, help='Window length used to build train samples')
     parser.add_argument('--d_model', type=int, default=256, help='Transformer model dimension')
     parser.add_argument('--nhead', type=int, default=8, help='Number of attention heads')
     parser.add_argument('--num_layers', type=int, default=8, help='Number of transformer encoder layers')
@@ -189,6 +191,7 @@ if __name__ == '__main__':
         subset_size=args.subset_size,
         num_epochs=args.epochs,
         batch_size=args.batch_size,
+        window_length=args.window_length,
         d_model=args.d_model,
         nhead=args.nhead,
         num_layers=args.num_layers,
