@@ -102,15 +102,20 @@ class PDWNormalizer:
             normalized[b, :, 3] = (aoa + 180.0) / 360.0
             
             # Feature 4: Amplitude - Z-score normalization
-            # Replace inf/-inf before computing stats to avoid NaN loss
+            # Some windows can have only invalid amplitude values (inf/-inf).
+            # Use finite values for stats; keep invalid values as 0 after normalization.
             amp = pulse_train[:, 4]
-            amp = np.where(np.isfinite(amp), amp, np.nan)
-            amp_mean = np.nanmean(amp)
-            amp_std = np.nanstd(amp)
-            if amp_std > 0:
-                norm_amp = (amp - amp_mean) / amp_std
-                # Replace NaN (originally inf) with 0 after normalization
-                normalized[b, :, 4] = np.where(np.isfinite(norm_amp), norm_amp, 0.0)
+            finite_mask = np.isfinite(amp)
+            if finite_mask.any():
+                amp_finite = amp[finite_mask]
+                amp_mean = amp_finite.mean()
+                amp_std = amp_finite.std()
+                if amp_std > 0:
+                    norm_amp = np.zeros_like(amp)
+                    norm_amp[finite_mask] = (amp[finite_mask] - amp_mean) / amp_std
+                    normalized[b, :, 4] = norm_amp
+                else:
+                    normalized[b, :, 4] = 0.0
             else:
                 normalized[b, :, 4] = 0.0
         
