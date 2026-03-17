@@ -6,8 +6,8 @@ PDW features (5 dimensions):
 0. Time of Arrival (ToA): Min-max scale to [0, 1]
 1. Centre Frequency: Z-score normalization (mean=0, std=1)
 2. Pulse Width (PW): Z-score normalization
-3. Angle of Arrival (AoA): Divide by 360 to scale to [0, 1]
-4. Amplitude: Z-score normalization
+3. Angle of Arrival (AoA): (aoa + 180) / 360 → scale [-180, 180] deg to [0, 1]
+4. Amplitude: Z-score normalization (inf values replaced with 0 after normalization)
 
 NOTE: Normalization is done WITHIN EACH pulse train separately.
 """
@@ -23,8 +23,8 @@ class PDWNormalizer:
     
     Applies feature-specific normalization as described in the paper:
     - ToA: Min-max scaling to [0, 1]
-    - Frequency, PW, Amplitude: Z-score normalization
-    - AoA: Division by 360
+    - Frequency, PW, Amplitude: Z-score normalization (inf values in Amplitude replaced with 0)
+    - AoA: (aoa + 180) / 360 → maps [-180°, 180°] to [0, 1]
     
     Normalization is applied independently to each pulse train.
     """
@@ -95,16 +95,22 @@ class PDWNormalizer:
             else:
                 normalized[b, :, 2] = 0.0
             
-            # Feature 3: AoA - Divide by 360
+            # Feature 3: AoA - Scale to [0, 1]
+            # Data is in [-180, 180] degrees, so use (aoa + 180) / 360
             aoa = pulse_train[:, 3]
-            normalized[b, :, 3] = aoa / 360.0
+            aoa = np.clip(aoa, -180.0, 180.0)  # clamp any out-of-range values
+            normalized[b, :, 3] = (aoa + 180.0) / 360.0
             
             # Feature 4: Amplitude - Z-score normalization
+            # Replace inf/-inf before computing stats to avoid NaN loss
             amp = pulse_train[:, 4]
-            amp_mean = amp.mean()
-            amp_std = amp.std()
+            amp = np.where(np.isfinite(amp), amp, np.nan)
+            amp_mean = np.nanmean(amp)
+            amp_std = np.nanstd(amp)
             if amp_std > 0:
-                normalized[b, :, 4] = (amp - amp_mean) / amp_std
+                norm_amp = (amp - amp_mean) / amp_std
+                # Replace NaN (originally inf) with 0 after normalization
+                normalized[b, :, 4] = np.where(np.isfinite(norm_amp), norm_amp, 0.0)
             else:
                 normalized[b, :, 4] = 0.0
         

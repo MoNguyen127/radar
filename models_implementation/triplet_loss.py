@@ -56,24 +56,45 @@ class BatchAllTripletLoss(nn.Module):
             stats: Dictionary with statistics (num_triplets, num_valid, etc.)
         """
         batch_size, seq_len, embedding_dim = embeddings.shape
-        
-        # Reshape to treat all pulses in batch together
-        # This allows us to compute distances across the entire batch
-        embeddings_flat = embeddings.view(-1, embedding_dim)  # (batch*seq, embed_dim)
-        labels_flat = labels.view(-1)  # (batch*seq,)
-        
-        # Compute pairwise distance matrix
-        distances = self._pairwise_distances(embeddings_flat, squared=self.squared)
-        
-        # Get positive and negative masks
-        positive_mask = self._get_positive_mask(labels_flat)
-        negative_mask = self._get_negative_mask(labels_flat)
-        
-        # Compute triplet loss
-        loss, stats = self._batch_all_triplet_loss(
-            distances, positive_mask, negative_mask
-        )
-        
+
+        # Compute loss per pulse train in the batch to avoid mixing labels
+        # across different samples (label IDs are local per pulse train).
+        weighted_loss_sum = torch.tensor(0.0, device=embeddings.device)
+        total_valid_triplets = 0.0
+        total_non_easy_triplets = 0.0
+
+        for batch_idx in range(batch_size):
+            emb = embeddings[batch_idx]  # (seq_len, embedding_dim)
+            lbl = labels[batch_idx]      # (seq_len,)
+
+            distances = self._pairwise_distances(emb, squared=self.squared)
+            positive_mask = self._get_positive_mask(lbl)
+            negative_mask = self._get_negative_mask(lbl)
+
+            sample_loss, sample_stats = self._batch_all_triplet_loss(
+                distances, positive_mask, negative_mask
+            )
+
+            sample_non_easy = sample_stats['num_non_easy_triplets']
+            sample_valid = sample_stats['num_valid_triplets']
+
+            if sample_non_easy > 0:
+                weighted_loss_sum = weighted_loss_sum + sample_loss * sample_non_easy
+
+            total_valid_triplets += sample_valid
+            total_non_easy_triplets += sample_non_easy
+
+        if total_non_easy_triplets > 0:
+            loss = weighted_loss_sum / total_non_easy_triplets
+        else:
+            loss = torch.tensor(0.0, device=embeddings.device, requires_grad=True)
+
+        stats = {
+            'num_valid_triplets': total_valid_triplets,
+            'num_non_easy_triplets': total_non_easy_triplets,
+            'fraction_non_easy': total_non_easy_triplets / (total_valid_triplets + 1e-16),
+        }
+
         return loss, stats
     
     def _pairwise_distances(
