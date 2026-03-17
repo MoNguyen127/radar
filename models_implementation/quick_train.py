@@ -5,6 +5,7 @@ Useful for debugging and quick experiments.
 
 import sys
 from pathlib import Path
+import argparse
 import torch
 from torch.utils.data import DataLoader, Subset
 import numpy as np
@@ -36,7 +37,17 @@ def collate_fn(batch):
     return torch.FloatTensor(np.stack(data)), torch.LongTensor(np.stack(labels))
 
 
-def quick_train():
+def quick_train(
+    data_dir: Path,
+    subset_size: int = 100,
+    num_epochs: int = 3,
+    batch_size: int = 4,
+    d_model: int = 256,
+    nhead: int = 8,
+    num_layers: int = 8,
+    dim_feedforward: int = 2048,
+    embedding_dim: int = 8,
+):
     """Quick training on small subset for testing."""
     
     print("="*60)
@@ -49,8 +60,6 @@ def quick_train():
     
     # Load small subset of data
     print("\nLoading data...")
-    data_dir = Path(__file__).parent.parent / 'data'
-    
     train_dataset = DeinterleavingChallengeDataset(
         subset='train',
         window_length=1000,
@@ -59,7 +68,7 @@ def quick_train():
     )
     
     # Use only first 100 samples for quick test
-    subset_size = min(100, len(train_dataset))
+    subset_size = min(subset_size, len(train_dataset))
     train_subset = Subset(train_dataset, range(subset_size))
     
     print(f"Using {len(train_subset)} training samples")
@@ -71,7 +80,7 @@ def quick_train():
     # Create dataloader
     train_loader = DataLoader(
         train_subset,
-        batch_size=4,
+        batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_fn,
         num_workers=0,  # Avoid multiprocessing issues
@@ -81,11 +90,11 @@ def quick_train():
     print("\nCreating model...")
     model = TransformerDeinterleaver(
         input_dim=5,
-        d_model=256,
-        nhead=8,
-        num_layers=8,
-        dim_feedforward=2048,
-        embedding_dim=8,
+        d_model=d_model,
+        nhead=nhead,
+        num_layers=num_layers,
+        dim_feedforward=dim_feedforward,
+        embedding_dim=embedding_dim,
         dropout=0.05,
     ).to(device)
     
@@ -97,7 +106,6 @@ def quick_train():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     
     # Train for a few epochs
-    num_epochs = 3
     print(f"\nTraining for {num_epochs} epochs...")
     
     for epoch in range(1, num_epochs + 1):
@@ -139,11 +147,11 @@ def quick_train():
     torch.save({
         'model_state_dict': model.state_dict(),
         'config': {
-            'd_model': 256,
-            'nhead': 8,
-            'num_layers': 8,
-            'dim_feedforward': 2048,
-            'embedding_dim': 8,
+            'd_model': d_model,
+            'nhead': nhead,
+            'num_layers': num_layers,
+            'dim_feedforward': dim_feedforward,
+            'embedding_dim': embedding_dim,
             'dropout': 0.05,
         }
     }, output_path)
@@ -158,5 +166,32 @@ def quick_train():
     print("="*60)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Quick training smoke test on a small subset')
+    parser.add_argument('--data_dir', type=str, default=None, help='Path to dataset root (contains train/validation/test)')
+    parser.add_argument('--subset_size', type=int, default=100, help='Number of train windows to use')
+    parser.add_argument('--epochs', type=int, default=3, help='Number of quick-test epochs')
+    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for quick-test')
+    parser.add_argument('--d_model', type=int, default=256, help='Transformer model dimension')
+    parser.add_argument('--nhead', type=int, default=8, help='Number of attention heads')
+    parser.add_argument('--num_layers', type=int, default=8, help='Number of transformer encoder layers')
+    parser.add_argument('--dim_feedforward', type=int, default=2048, help='Feedforward hidden dimension')
+    parser.add_argument('--embedding_dim', type=int, default=8, help='Embedding output dimension')
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    quick_train()
+    args = parse_args()
+    default_data_dir = Path(__file__).parent.parent / 'data'
+    data_dir = Path(args.data_dir) if args.data_dir is not None else default_data_dir
+    quick_train(
+        data_dir=data_dir,
+        subset_size=args.subset_size,
+        num_epochs=args.epochs,
+        batch_size=args.batch_size,
+        d_model=args.d_model,
+        nhead=args.nhead,
+        num_layers=args.num_layers,
+        dim_feedforward=args.dim_feedforward,
+        embedding_dim=args.embedding_dim,
+    )
