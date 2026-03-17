@@ -21,6 +21,8 @@ import argparse
 import math
 import statistics
 import time
+import sys
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -34,8 +36,15 @@ from sklearn.metrics import (
     v_measure_score,
 )
 
-from turing_deinterleaving_challenge.models import TransformerDeinterleaver
-from turing_deinterleaving_challenge.models.config import EmbeddingConfig
+try:
+    # Newer package layout (may not expose TransformerDeinterleaver in this repo).
+    from turing_deinterleaving_challenge.models import TransformerDeinterleaver  # type: ignore
+    HAS_SRC_MODEL = True
+except Exception:
+    # Fallback to local implementation used in this repository.
+    sys.path.insert(0, str(Path(__file__).parent / "models_implementation"))
+    from transformer_model import TransformerDeinterleaver  # type: ignore
+    HAS_SRC_MODEL = False
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +108,32 @@ def _run(fn, warmup: int, repeats: int, device: torch.device) -> tuple[float, fl
 def _flag(mean_s: float, all_means: list[float]) -> str:
     """Mark the slowest operation with an arrow."""
     return "  ◄ bottleneck" if mean_s == max(all_means) else ""
+
+
+def _encode(model: TransformerDeinterleaver, data: torch.Tensor) -> torch.Tensor:
+    """Unified embedding API across src model and local models_implementation model."""
+    if hasattr(model, "encode"):
+        return model.encode(data)
+    emb = model(data)
+    return F.normalize(emb, p=2, dim=-1)
+
+
+def _embedding_only(model: TransformerDeinterleaver, data: torch.Tensor) -> torch.Tensor:
+    """Embedding/projection stage only (for timing breakdown)."""
+    if hasattr(model, "embedding"):
+        return model.embedding(data)
+    if hasattr(model, "input_projection"):
+        return model.input_projection(data)
+    raise AttributeError("Model has no known embedding/projection module")
+
+
+def _transformer_only(model: TransformerDeinterleaver, emb: torch.Tensor) -> torch.Tensor:
+    """Transformer encoder stage only (for timing breakdown)."""
+    if hasattr(model, "transformer"):
+        return model.transformer(emb)
+    if hasattr(model, "transformer_encoder"):
+        return model.transformer_encoder(emb)
+    raise AttributeError("Model has no known transformer encoder module")
 
 
 # ---------------------------------------------------------------------------
@@ -197,30 +232,30 @@ def bench_train_step(
     # ── PDWEmbedding forward ─────────────────────────────────────────────────
     def _emb():
         data, _ = _make()
-        model.embedding(data)
+        _embedding_only(model, data)
 
     results["PDWEmbedding forward"] = _run(_emb, warmup, repeats, device)
 
     # ── TransformerEncoder forward ───────────────────────────────────────────
     def _transformer():
         data, _ = _make()
-        emb = model.embedding(data)
-        model.transformer(emb)
+        emb = _embedding_only(model, data)
+        _transformer_only(model, emb)
 
     results["TransformerEncoder"] = _run(_transformer, warmup, repeats, device)
 
     # ── Full encode() (embedding + transformer + metric_head + L2 norm) ──────
-    def _encode():
+    def _encode_full():
         data, _ = _make()
-        model.encode(data)
+        _encode(model, data)
 
-    results["Full encode()"] = _run(_encode, warmup, repeats, device)
+    results["Full encode()"] = _run(_encode_full, warmup, repeats, device)
 
     # ── Triplet loss forward ─────────────────────────────────────────────────
     def _loss_fwd():
         data, labels = _make()
         with torch.no_grad():
-            emb = model.encode(data)
+            emb = _encode(model, data)
         z = emb.reshape(batch * seq, -1)
         y = labels.reshape(batch * seq)
         _triplet_fwd(z, y, margin, max_triplet_n)
@@ -230,7 +265,7 @@ def bench_train_step(
     # ── Backward pass ────────────────────────────────────────────────────────
     def _backward():
         data, labels = _make()
-        emb = model.encode(data)
+        emb = _encode(model, data)
         z   = emb.reshape(batch * seq, -1)
         y   = labels.reshape(batch * seq)
         loss = _triplet_fwd(z, y, margin, max_triplet_n)
@@ -241,7 +276,7 @@ def bench_train_step(
     # ── Optimizer step ───────────────────────────────────────────────────────
     def _opt_step():
         data, labels = _make()
-        emb  = model.encode(data)
+        emb  = _encode(model, data)
         z    = emb.reshape(batch * seq, -1)
         y    = labels.reshape(batch * seq)
         loss = _triplet_fwd(z, y, margin, max_triplet_n)
@@ -281,14 +316,14 @@ def bench_val_step(
     def _encode_nograd():
         data, _ = _make()
         with torch.no_grad():
-            model.encode(data)
+            _encode(model, data)
 
     results["encode() no-grad"] = _run(_encode_nograd, warmup, repeats, device)
 
     # ── GPU→CPU transfer ─────────────────────────────────────────────────────
     _data, _ = _make()
     with torch.no_grad():
-        _emb_gpu = model.encode(_data)   # (batch, seq, d_model)
+        _emb_gpu = _encode(model, _data)   # (batch, seq, embedding_dim)
 
     def _transfer():
         _emb_gpu.cpu().numpy()
@@ -445,18 +480,28 @@ def main() -> None:
         device = torch.device(args.device)
     print(f"Device: {device}")
 
-    # Build model (feature_stats=None → identity normalization, fine for timing)
-    model = TransformerDeinterleaver(
-        d_model=args.d_model,
-        d_feat=args.d_feat,
-        nhead=args.nhead,
-        num_layers=args.num_layers,
-        dim_feedforward=args.dim_feedforward,
-        dropout=args.dropout,
-        feature_stats=None,
-        min_cluster_size=args.min_cluster_size,
-        embedding_config=EmbeddingConfig(),
-    ).to(device)
+    # Build model with compatible constructor for current source.
+    if HAS_SRC_MODEL:
+        model = TransformerDeinterleaver(
+            d_model=args.d_model,
+            d_feat=args.d_feat,
+            nhead=args.nhead,
+            num_layers=args.num_layers,
+            dim_feedforward=args.dim_feedforward,
+            dropout=args.dropout,
+            feature_stats=None,
+            min_cluster_size=args.min_cluster_size,
+        ).to(device)
+    else:
+        model = TransformerDeinterleaver(
+            input_dim=5,
+            d_model=args.d_model,
+            nhead=args.nhead,
+            num_layers=args.num_layers,
+            dim_feedforward=args.dim_feedforward,
+            embedding_dim=args.d_feat,
+            dropout=args.dropout,
+        ).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model parameters: {n_params:,}")
 
