@@ -54,7 +54,7 @@ def load_model(checkpoint_path: Path, device: str = 'cuda') -> TransformerDeinte
     """Load trained model from checkpoint."""
     
     print(f"Loading checkpoint from: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # Get model config
     config = checkpoint.get('config', {})
