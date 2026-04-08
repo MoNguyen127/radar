@@ -74,7 +74,7 @@ def train_epoch_amp(
     dataloader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
     device: str,
     epoch: int,
     writer: SummaryWriter,
@@ -98,7 +98,7 @@ def train_epoch_amp(
         labels = labels.to(device)
 
         # --- AMP: Forward pass in float16 ---
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with torch.amp.autocast('cuda', enabled=use_amp):
             embeddings = model(data)          # (batch, seq, embed_dim)
             loss, stats = criterion(embeddings, labels)
 
@@ -161,7 +161,7 @@ def validate(
             data = data.to(device)
             labels = labels.to(device)
 
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast('cuda', enabled=use_amp):
                 embeddings = model(data)
                 loss, stats = criterion(embeddings, labels)
 
@@ -316,7 +316,7 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # --- AMP: Initialize GradScaler ---
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     print("\nStarting AMP training...")
     best_v_measure = 0.0
