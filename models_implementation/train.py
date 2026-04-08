@@ -207,6 +207,7 @@ def train(
     num_workers: int = 4,
     save_every: int = 1,
     validate_every: int = 1,
+    resume_from: str = None,  # Path to checkpoint.pt để tiếp tục train
 ):
     """Main training function."""
     
@@ -310,13 +311,28 @@ def train(
     # Create loss and optimizer
     criterion = BatchAllTripletLoss(margin=triplet_margin)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    
-    # Training loop
-    print("\nStarting training...")
+
+    # Resume từ checkpoint nếu có
+    start_epoch = 1
     best_v_measure = 0.0
     global_step = 0
-    
-    for epoch in range(1, num_epochs + 1):
+    if resume_from:
+        print(f"\nResuming from: {resume_from}")
+        ckpt = torch.load(resume_from, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt['model_state_dict'])
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        start_epoch = ckpt['epoch'] + 1
+        best_v_measure = ckpt.get('v_measure', 0.0)
+        global_step = ckpt.get('global_step', 0)
+        print(f"→ Epoch đã train: {ckpt['epoch']} | Tiếp tục từ epoch {start_epoch}/{num_epochs}")
+        print(f"→ Best V-measure trước: {best_v_measure:.4f}")
+        if start_epoch > num_epochs:
+            raise ValueError(f"Checkpoint đã train đủ {num_epochs} epochs rồi! Tăng --num_epochs lên.")
+
+    # Training loop
+    print("\nStarting training...")
+
+    for epoch in range(start_epoch, num_epochs + 1):
         print(f"\n{'='*50}")
         print(f"Epoch {epoch}/{num_epochs}")
         print(f"{'='*50}")
@@ -368,6 +384,7 @@ def train(
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'global_step': global_step,
                 'config': config,
             }, output_dir / f'checkpoint_epoch_{epoch}.pt')
     
@@ -421,6 +438,8 @@ def main():
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--save_every', type=int, default=1)
     parser.add_argument('--validate_every', type=int, default=1)
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint_epoch_N.pt để tiếp tục train')
     
     args = parser.parse_args()
     
@@ -428,9 +447,13 @@ def main():
     data_dir = Path(args.data_dir)
     output_dir = Path(args.output_dir)
     
-    # Create output directory with timestamp
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir = output_dir / f'run_{timestamp}'
+    # Nếu resume: dùng cùng output_dir với checkpoint; nếu không: tạo mới
+    if args.resume:
+        output_dir = Path(args.resume).parent
+        print(f"Resume mode → tiếp tục lưu vào: {output_dir}")
+    else:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_dir = output_dir / f'run_{timestamp}'
     
     # Train
     train(
@@ -453,6 +476,7 @@ def main():
         num_workers=args.num_workers,
         save_every=args.save_every,
         validate_every=args.validate_every,
+        resume_from=args.resume,
     )
 
 
