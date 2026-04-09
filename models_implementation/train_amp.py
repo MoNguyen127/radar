@@ -106,10 +106,8 @@ def train_epoch_amp(
         optimizer.zero_grad()
         scaler.scale(loss).backward()
 
-        # Unscale before gradient clipping
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
+        # PyTorch 2.4+: KHÔNG gọi unscale_() thủ công — gây AssertionError "No inf checks"
+        # scaler.step() tự unscale() bên trong, phát hiện inf/NaN, rồi skip batch nếu cần
         scaler.step(optimizer)
         scaler.update()
 

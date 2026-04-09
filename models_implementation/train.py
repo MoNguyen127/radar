@@ -21,7 +21,7 @@ import json
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import numpy as np
@@ -202,6 +202,7 @@ def train(
     window_length: int = 1000,
     min_emitters: int = 2,
     min_cluster_size: int = 20,
+    subset_size: int = None,  # None = tất cả, int = giới hạn số windows (paper 1 dùng 100000)
     # Other
     device: str = None,
     num_workers: int = 4,
@@ -271,7 +272,14 @@ def train(
     normalizer = PDWNormalizer()
     train_dataset = NormalizedDataset(train_dataset, normalizer)
     val_dataset = NormalizedDataset(val_dataset, normalizer)
-    
+
+    # Giới hạn số windows train (paper 1 dùng 100,000)
+    if subset_size is not None:
+        actual_size = min(subset_size, len(train_dataset))
+        indices = torch.randperm(len(train_dataset))[:actual_size].tolist()
+        train_dataset = Subset(train_dataset, indices)
+        print(f"→ Subset: {actual_size} windows (paper 1 style)")
+
     # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
@@ -438,6 +446,8 @@ def main():
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--save_every', type=int, default=1)
     parser.add_argument('--validate_every', type=int, default=1)
+    parser.add_argument('--subset_size', type=int, default=None,
+                        help='Giới hạn số windows train. Paper 1 dùng 100000. None = tất cả')
     parser.add_argument('--resume', type=str, default=None,
                         help='Path to checkpoint_epoch_N.pt để tiếp tục train')
     
@@ -472,6 +482,7 @@ def main():
         window_length=args.window_length,
         min_emitters=args.min_emitters,
         min_cluster_size=args.min_cluster_size,
+        subset_size=args.subset_size,
         device=args.device,
         num_workers=args.num_workers,
         save_every=args.save_every,
