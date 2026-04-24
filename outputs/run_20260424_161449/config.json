@@ -1,0 +1,21 @@
+{
+  "model": {
+    "d_model": 256,
+    "nhead": 8,
+    "num_layers": 8,
+    "dim_feedforward": 2048,
+    "embedding_dim": 8,
+    "dropout": 0.05
+  },
+  "training": {
+    "batch_size": 8,
+    "learning_rate": 0.0001,
+    "num_epochs": 8,
+    "triplet_margin": 1.9
+  },
+  "data": {
+    "window_length": 500,
+    "min_emitters": 2,
+    "min_cluster_size": 20
+  }
+}
