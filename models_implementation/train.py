@@ -311,14 +311,30 @@ def train(
         dropout=dropout,
     )
     model = model.to(device)
-    
+
+    # Multi-GPU với DataParallel (tự động chia batch cho các GPU)
+    n_gpus = torch.cuda.device_count() if device == 'cuda' else 0
+    if n_gpus > 1:
+        # Đặt GPU cuối cùng làm master (nơi gather embeddings và tính triplet loss)
+        # Lý do: GPU 0 có thể đang bị process khác chiếm VRAM
+        primary_gpu = n_gpus - 1
+        device_ids  = [primary_gpu] + [i for i in range(n_gpus) if i != primary_gpu]
+        print(f"→ Sử dụng DataParallel trên {n_gpus} GPU. Master = cuda:{primary_gpu}")
+        device = f'cuda:{primary_gpu}'
+        model  = model.to(device)
+        model  = nn.DataParallel(model, device_ids=device_ids, output_device=primary_gpu)
+
     # Count parameters
-    total_params = sum(p.numel() for p in model.parameters())
+    total_params = sum(p.numel() for p in (model.module if isinstance(model, nn.DataParallel) else model).parameters())
     print(f"Total parameters: {total_params:,}")
     
     # Create loss and optimizer
     criterion = BatchAllTripletLoss(margin=triplet_margin)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Helper để lấy model gốc (unwrap DataParallel)
+    def _raw_model():
+        return model.module if isinstance(model, nn.DataParallel) else model
 
     # Resume từ checkpoint nếu có
     start_epoch = 1
@@ -327,7 +343,7 @@ def train(
     if resume_from:
         print(f"\nResuming from: {resume_from}")
         ckpt = torch.load(resume_from, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt['model_state_dict'])
+        _raw_model().load_state_dict(ckpt['model_state_dict'])
         optimizer.load_state_dict(ckpt['optimizer_state_dict'])
         start_epoch = ckpt['epoch'] + 1
         best_v_measure = ckpt.get('v_measure', 0.0)
@@ -379,27 +395,27 @@ def train(
                 best_v_measure = val_results['V-measure']
                 torch.save({
                     'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
+                    'model_state_dict': _raw_model().state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'v_measure': best_v_measure,
                     'config': config,
                 }, output_dir / 'best_model.pt')
                 print(f"  ✓ Saved best model (V-measure: {best_v_measure:.4f})")
-        
+
         # Save checkpoint
         if epoch % save_every == 0:
             torch.save({
                 'epoch': epoch,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': _raw_model().state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'global_step': global_step,
                 'config': config,
             }, output_dir / f'checkpoint_epoch_{epoch}.pt')
-    
+
     # Final save
     torch.save({
         'epoch': num_epochs,
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': _raw_model().state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'config': config,
     }, output_dir / 'final_model.pt')
